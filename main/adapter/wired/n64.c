@@ -1,15 +1,17 @@
 /*
- * Copyright (c) 2019-2023, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <string.h>
 #include "zephyr/types.h"
 #include "tools/util.h"
+#include "adapter/adapter.h"
 #include "adapter/config.h"
-#include "bluetooth/host.h"
 #include "adapter/wired/wired.h"
 #include "adapter/wireless/wireless.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "n64.h"
 
 #define N64_AXES_MAX 2
@@ -64,17 +66,17 @@ struct n64_kb_map {
     uint8_t bitfield;
 } __packed;
 
-static const uint32_t n64_mask[4] = {0x33DFAFFF, 0x00000000, 0x00000000, BR_COMBO_MASK};
+static const uint32_t n64_mask[4] = {0x77DF0FFF, 0x00000000, 0x00000000, BR_COMBO_MASK};
 static const uint32_t n64_desc[4] = {0x0000000F, 0x00000000, 0x00000000, 0x00000000};
 static DRAM_ATTR const uint32_t n64_btns_mask[32] = {
     0, 0, 0, 0,
     BIT(N64_C_LEFT), BIT(N64_C_RIGHT), BIT(N64_C_DOWN), BIT(N64_C_UP),
     BIT(N64_LD_LEFT), BIT(N64_LD_RIGHT), BIT(N64_LD_DOWN), BIT(N64_LD_UP),
-    0, BIT(N64_C_RIGHT), 0, BIT(N64_C_UP),
+    0, 0, 0, 0,
     BIT(N64_B), BIT(N64_C_DOWN), BIT(N64_A), BIT(N64_C_LEFT),
     BIT(N64_START), 0, 0, 0,
-    BIT(N64_Z), BIT(N64_L), 0, 0,
-    BIT(N64_Z), BIT(N64_R), 0, 0,
+    BIT(N64_Z), BIT(N64_L), BIT(N64_C_UP), 0,
+    BIT(N64_Z), BIT(N64_R), BIT(N64_C_RIGHT), 0,
 };
 
 static const uint32_t n64_mouse_mask[4] = {0x110000F0, 0x00000000, 0x00000000, BR_COMBO_MASK};
@@ -186,28 +188,6 @@ void n64_meta_init(struct wired_ctrl *ctrl_data) {
     }
 }
 
-static void n64_acc_toggle_fb(uint32_t wired_id, uint32_t duration_us) {
-    struct bt_dev *device = NULL;
-    struct bt_data *bt_data = NULL;
-
-    bt_host_get_dev_from_out_idx(wired_id, &device);
-    if (device) {
-        bt_data = &bt_adapter.data[device->ids.id];
-        if (bt_data) {
-            struct generic_fb fb_data = {0};
-
-            fb_data.wired_id = wired_id;
-            fb_data.type = FB_TYPE_RUMBLE;
-            fb_data.cycles = 0;
-            fb_data.start = 0;
-            fb_data.state = 1;
-            adapter_fb_stop_timer_start(wired_id, duration_us);
-            wireless_fb_from_generic(&fb_data, bt_data);
-            bt_hid_feedback(device, bt_data->base.output);
-        }
-    }
-}
-
 static void n64_ctrl_special_action(struct wired_ctrl *ctrl_data, struct wired_data *wired_data) {
     /* Memory / Rumble toggle */
     if (ctrl_data->map_mask[0] & generic_btns_mask[PAD_MT]) {
@@ -223,12 +203,12 @@ static void n64_ctrl_special_action(struct wired_ctrl *ctrl_data, struct wired_d
                 /* Change config directly but do not update file */
                 if (config.out_cfg[ctrl_data->index].acc_mode == ACC_MEM) {
                     config.out_cfg[ctrl_data->index].acc_mode = ACC_RUMBLE;
-                    n64_acc_toggle_fb(ctrl_data->index, 250000);
+                    adapter_toggle_fb(ctrl_data->index, 300000);
                     printf("# %s: Set rumble pak\n", __FUNCTION__);
                 }
                 else {
                     config.out_cfg[ctrl_data->index].acc_mode = ACC_MEM;
-                    n64_acc_toggle_fb(ctrl_data->index, 75000);
+                    adapter_toggle_fb(ctrl_data->index, 150000);
                     printf("# %s: Set ctrl pak\n", __FUNCTION__);
                 }
             }
@@ -292,10 +272,10 @@ static void n64_ctrl_from_generic(struct wired_ctrl *ctrl_data, struct wired_dat
 
     memcpy(wired_data->output, (void *)&map_tmp, sizeof(map_tmp));
 
-#ifdef CONFIG_BLUERETRO_RAW_OUTPUT
-    printf("{\"log_type\": \"wired_output\", \"axes\": [%d, %d], \"btns\": %d}\n",
+    TESTS_CMDS_LOG("\"wired_output\": {\"axes\": [%d, %d], \"btns\": %d},\n",
         map_tmp.axes[n64_axes_idx[0]], map_tmp.axes[n64_axes_idx[1]], map_tmp.buttons);
-#endif
+    BT_MON_LOG("\"wired_output\": {\"axes\": [%02X, %02X], \"btns\": %04X},\n",
+        map_tmp.axes[n64_axes_idx[0]], map_tmp.axes[n64_axes_idx[1]], map_tmp.buttons);
 }
 
 static void n64_mouse_from_generic(struct wired_ctrl *ctrl_data, struct wired_data *wired_data) {
@@ -376,9 +356,17 @@ void n64_from_generic(int32_t dev_mode, struct wired_ctrl *ctrl_data, struct wir
 void n64_fb_to_generic(int32_t dev_mode, struct raw_fb *raw_fb_data, struct generic_fb *fb_data) {
     fb_data->wired_id = raw_fb_data->header.wired_id;
     fb_data->type = raw_fb_data->header.type;
-    fb_data->state = raw_fb_data->data[0];
-    fb_data->cycles = 0;
-    fb_data->start = 0;
+
+    /* This stop rumble when BR timeout trigger */
+    if (raw_fb_data->header.data_len == 0) {
+        fb_data->state = 0;
+        fb_data->lf_pwr = fb_data->hf_pwr = 0;
+    }
+    else {
+        fb_data->state = raw_fb_data->data[0];
+        fb_data->lf_pwr = (fb_data->state) ? 0xFF : 0x00;
+        fb_data->hf_pwr = (fb_data->state) ? 0xFF : 0x00;
+    }
 }
 
 void IRAM_ATTR n64_gen_turbo_mask(struct wired_data *wired_data) {

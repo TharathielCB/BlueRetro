@@ -17,6 +17,7 @@
 
 #define BT_MAX_RETRY 3
 #define BT_SDP_DATA_SIZE 2048
+#define BT_PNP_DATA_SIZE 256
 
 enum {
     /* BT device connection flags */
@@ -33,6 +34,7 @@ enum {
     BT_DEV_IS_BLE,
     BT_DEV_FB_DELAY,
     BT_DEV_CALIB_SET,
+    BT_DEV_PPCP_DONE,
 };
 
 enum {
@@ -73,6 +75,7 @@ struct bt_dev {
     uint32_t hid_state;
     void *timer_hdl;
     uint8_t tid;
+    uint8_t hid_retry_cnt;
     const struct bt_name_type *name;
     union {
         struct {
@@ -147,6 +150,7 @@ int32_t bt_host_get_dev_from_bdaddr(uint8_t *bdaddr, struct bt_dev **device);
 int32_t bt_host_get_dev_from_handle(uint16_t handle, struct bt_dev **device);
 int32_t bt_host_get_dev_from_id(uint8_t id, struct bt_dev **device);
 int32_t bt_host_get_dev_from_out_idx(uint8_t out_idx, struct bt_dev **device);
+int32_t bt_host_get_active_dev_from_out_idx(uint8_t out_idx, struct bt_dev **device);
 int32_t bt_host_get_dev_conf(struct bt_dev **device);
 void bt_host_reset_dev(struct bt_dev *device);
 void bt_host_q_wait_pkt(uint32_t ms);

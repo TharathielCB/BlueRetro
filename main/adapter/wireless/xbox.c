@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2022, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,10 @@
 #include "zephyr/types.h"
 #include "tools/util.h"
 #include "adapter/mapping_quirks.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "xbox.h"
+#include "bluetooth/hidp/xbox.h"
 
 /* xinput buttons */
 enum {
@@ -88,33 +91,6 @@ struct xb1_map {
     uint8_t pad[15]; /* adaptive controller unmap */
     uint8_t extra; /* adaptive extra buttons */
 } __packed;
-
-struct xb1_rumble {
-    uint8_t enable;
-    uint8_t mag_lt;
-    uint8_t mag_rt;
-    uint8_t mag_l;
-    uint8_t mag_r;
-    uint8_t duration;
-    uint8_t delay;
-    uint8_t cnt;
-} __packed;
-
-static const struct xb1_rumble xb1_rumble_on = {
-    .enable = 0x03,
-    .mag_l = 0x1e,
-    .mag_r = 0x1e,
-    .duration = 0xFF,
-    .cnt = 0x00,
-};
-
-static const struct xb1_rumble xb1_rumble_off = {
-    .enable = 0x03,
-    .mag_l = 0x00,
-    .mag_r = 0x00,
-    .duration = 0xFF,
-    .cnt = 0xFF,
-};
 
 static const uint32_t xb1_mask[4] = {0xBB3F0FFF, 0x00000000, 0x00000000, 0x00000000};
 static const uint32_t xb1_mask2[4] = {0x00400000, 0x00000000, 0x00000000, 0x00000000};
@@ -226,11 +202,17 @@ static void xbox_pad_init(struct bt_data *bt_data) {
 
     mapping_quirks_apply(bt_data);
 
+    bt_mon_log(false, "%s: axes_cal: [", __FUNCTION__);
     for (uint32_t i = 0; i < ADAPTER_MAX_AXES; i++) {
         meta[i].abs_max *= MAX_PULL_BACK;
         meta[i].abs_min *= MAX_PULL_BACK;
         bt_data->base.axes_cal[i] = -(map->axes[xb1_axes_idx[i]] - xb1_axes_meta[i].neutral);
+        if (i) {
+            bt_mon_log(false, ", ");
+        }
+        bt_mon_log(false, "%d", bt_data->base.axes_cal[i]);
     }
+    bt_mon_log(true, "]");
 
     atomic_set_bit(&bt_data->base.flags[PAD], BT_INIT);
 }
@@ -239,11 +221,9 @@ int32_t xbox_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_data
     struct xb1_map *map = (struct xb1_map *)bt_data->base.input;
     struct ctrl_meta *meta = bt_data->raw_src_mappings[PAD].meta;
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u},\n",
         bt_data->base.report_id, map->axes[xb1_axes_idx[0]], map->axes[xb1_axes_idx[1]], map->axes[xb1_axes_idx[2]],
         map->axes[xb1_axes_idx[3]], map->axes[xb1_axes_idx[4]], map->axes[xb1_axes_idx[5]], map->buttons, map->hat & 0xF);
-#endif
 
     if (!atomic_test_bit(&bt_data->base.flags[PAD], BT_INIT)) {
         xbox_pad_init(bt_data);
@@ -301,12 +281,18 @@ int32_t xbox_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_data
 }
 
 void xbox_fb_from_generic(struct generic_fb *fb_data, struct bt_data *bt_data) {
-    struct xb1_rumble *rumble = (struct xb1_rumble *)bt_data->base.output;
+    struct bt_hidp_xb1_rumble *rumble = (struct bt_hidp_xb1_rumble *)bt_data->base.output;
 
-    if (fb_data->state) {
-        memcpy((void *)rumble, (void *)&xb1_rumble_on, sizeof(xb1_rumble_on));
-    }
-    else {
-        memcpy((void *)rumble, (void *)&xb1_rumble_off, sizeof(xb1_rumble_off));
+    switch (fb_data->type) {
+        case FB_TYPE_RUMBLE:
+            if (fb_data->state) {
+                rumble->hf_motor_pwr = fb_data->hf_pwr;
+                rumble->lf_motor_pwr = fb_data->lf_pwr;
+            }
+            else {
+                rumble->hf_motor_pwr = 0x00;
+                rumble->lf_motor_pwr = 0x00;
+            }
+            break;
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,8 @@
 #include "tools/util.h"
 #include "bluetooth/hidp/ps.h"
 #include "adapter/config.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "ps.h"
 
 enum {
@@ -105,11 +107,9 @@ static void ps4_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_d
     struct ps4_map *map = (struct ps4_map *)bt_data->base.input;
     struct ctrl_meta *meta = bt_data->raw_src_mappings[PAD].meta;
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u},\n",
         bt_data->base.report_id, map->axes[ps4_axes_idx[0]], map->axes[ps4_axes_idx[1]], map->axes[ps4_axes_idx[2]],
         map->axes[ps4_axes_idx[3]], map->axes[ps4_axes_idx[4]], map->axes[ps4_axes_idx[5]], map->buttons, map->hat & 0xF);
-#endif
 
     memset((void *)ctrl_data, 0, sizeof(*ctrl_data));
 
@@ -127,12 +127,18 @@ static void ps4_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_d
 
     if (!atomic_test_bit(&bt_data->base.flags[PAD], BT_INIT)) {
         memcpy(meta, ps4_axes_meta, sizeof(ps4_axes_meta));
+        bt_mon_log(false, "%s: axes_cal: [", __FUNCTION__);
         for (uint32_t i = 0; i < ADAPTER_MAX_AXES; i++) {
             meta[i].abs_max *= MAX_PULL_BACK;
             meta[i].abs_min *= MAX_PULL_BACK;
             bt_data->base.axes_cal[i] = -(map->axes[ps4_axes_idx[i]] - ps4_axes_meta[i].neutral);
+            if (i) {
+                bt_mon_log(false, ", ");
+            }
+            bt_mon_log(false, "%d", bt_data->base.axes_cal[i]);
         }
         atomic_set_bit(&bt_data->base.flags[PAD], BT_INIT);
+        bt_mon_log(true, "]");
     }
 
     for (uint32_t i = 0; i < ADAPTER_MAX_AXES; i++) {
@@ -145,11 +151,9 @@ static void ps5_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_d
     struct ps5_map *map = (struct ps5_map *)bt_data->base.input;
     struct ctrl_meta *meta = bt_data->raw_src_mappings[PAD].meta;
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u},\n",
         bt_data->base.report_id, map->axes[ps5_axes_idx[0]], map->axes[ps5_axes_idx[1]], map->axes[ps5_axes_idx[2]],
         map->axes[ps5_axes_idx[3]], map->axes[ps5_axes_idx[4]], map->axes[ps5_axes_idx[5]], map->buttons, map->hat & 0xF);
-#endif
 
     memset((void *)ctrl_data, 0, sizeof(*ctrl_data));
 
@@ -185,11 +189,9 @@ static void hid_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_d
     struct hid_map *map = (struct hid_map *)bt_data->base.input;
     struct ctrl_meta *meta = bt_data->raw_src_mappings[PAD].meta;
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"report_id\": %ld, \"axes\": [%u, %u, %u, %u, %u, %u], \"btns\": %lu, \"hat\": %u},\n",
         bt_data->base.report_id, map->axes[ps4_axes_idx[0]], map->axes[ps4_axes_idx[1]], map->axes[ps4_axes_idx[2]],
         map->axes[ps4_axes_idx[3]], map->axes[ps4_axes_idx[4]], map->axes[ps4_axes_idx[5]], map->buttons, map->hat & 0xF);
-#endif
 
     memset((void *)ctrl_data, 0, sizeof(*ctrl_data));
 
@@ -223,26 +225,41 @@ static void hid_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_d
 
 static void ps4_fb_from_generic(struct generic_fb *fb_data, struct bt_data *bt_data) {
     struct bt_hidp_ps4_set_conf *set_conf = (struct bt_hidp_ps4_set_conf *)bt_data->base.output;
-    memset((void *)set_conf, 0, sizeof(*set_conf));
-    set_conf->conf0 = 0xc4;
-    set_conf->conf1 = 0x03;
-    set_conf->leds = hw_config.ps_ctrl_colors[bt_data->base.pids->id];
 
-    if (fb_data->state) {
-        set_conf->r_rumble = 0x7F;
-        set_conf->l_rumble = 0x7F;
+    switch (fb_data->type) {
+        case FB_TYPE_RUMBLE:
+            if (fb_data->state) {
+                set_conf->hf_motor_pwr = fb_data->hf_pwr;
+                set_conf->lf_motor_pwr = fb_data->lf_pwr;
+            }
+            else {
+                set_conf->hf_motor_pwr = 0x00;
+                set_conf->lf_motor_pwr = 0x00;
+            }
+            break;
+        case FB_TYPE_PLAYER_LED:
+            set_conf->leds = hw_config.ps_ctrl_colors[bt_data->base.pids->out_idx];
+            break;
     }
 }
 
 static void ps5_fb_from_generic(struct generic_fb *fb_data, struct bt_data *bt_data) {
     struct bt_hidp_ps5_set_conf *set_conf = (struct bt_hidp_ps5_set_conf *)bt_data->base.output;
-    memset((void *)set_conf, 0, sizeof(*set_conf));
 
-    set_conf->conf0 = 0x02;
-    if (fb_data->state) {
-        set_conf->cmd = 0x03;
-        set_conf->r_rumble = 0x3F;
-        set_conf->l_rumble = 0x3F;
+    switch (fb_data->type) {
+        case FB_TYPE_RUMBLE:
+            if (fb_data->state) {
+                set_conf->hf_motor_pwr = fb_data->hf_pwr;
+                set_conf->lf_motor_pwr = fb_data->lf_pwr;
+            }
+            else {
+                set_conf->hf_motor_pwr = 0x00;
+                set_conf->lf_motor_pwr = 0x00;
+            }
+            break;
+        case FB_TYPE_PLAYER_LED:
+            set_conf->leds = hw_config.ps_ctrl_colors[bt_data->base.pids->out_idx];
+            break;
     }
 }
 

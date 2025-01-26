@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,8 @@
 #include "tools/util.h"
 #include "adapter/mapping_quirks.h"
 #include "bluetooth/hidp/sw.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "sw.h"
 
 #define BT_HIDP_SW_SUBCMD_SET_LED 0x30
@@ -148,16 +150,6 @@ struct sw_native_map {
     uint32_t buttons;
     uint8_t axes[6];
 } __packed;
-
-struct sw_conf {
-    uint8_t tid;
-    uint8_t rumble[8];
-    uint8_t subcmd;
-    uint8_t subcmd_data[38];
-} __packed;
-
-static const uint8_t sw_rumble_on[] = {0x28, 0x88, 0x60, 0x61, 0x28, 0x88, 0x60, 0x61};
-static const uint8_t sw_rumble_off[] = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40};
 
 static const uint32_t sw_pro_mask[4] = {0xFFFF0FFF, 0x00000000, 0x00000000, 0x00000000};
 static const uint32_t sw_pro_desc[4] = {0x000000FF, 0x00000000, 0x00000000, 0x00000000};
@@ -323,7 +315,7 @@ static int32_t sw_pad_init(struct bt_data *bt_data) {
         memcpy(bt_data->raw_src_mappings[PAD].desc, desc,
             sizeof(bt_data->raw_src_mappings[PAD].desc));
     }
-    else if (bt_data->base.pids->subtype == BT_SUBTYPE_DEFAULT || bt_data->base.pids->subtype == BT_SW_POWERA) {
+    else if (bt_data->base.pids->subtype == BT_SUBTYPE_DEFAULT) {
         meta[0].polarity = 0;
         meta[1].polarity = 0;
         meta[2].polarity = 0;
@@ -448,10 +440,8 @@ static int32_t sw_native_to_generic(struct bt_data *bt_data, struct wireless_ctr
         axes[3] = (map->axes[4] >> 4) | (map->axes[5] << 4);
     }
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"axes\": [%u, %u, %u, %u], \"btns\": %lu}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"axes\": [%u, %u, %u, %u], \"btns\": %lu},\n",
         axes[0], axes[1], axes[2], axes[3], map->buttons);
-#endif
 
     for (uint32_t i = 0; i < SW_AXES_MAX; i++) {
         ctrl_data->axes[i].meta = &meta[i];
@@ -464,11 +454,9 @@ static int32_t sw_hid_to_generic(struct bt_data *bt_data, struct wireless_ctrl *
     struct sw_map *map = (struct sw_map *)bt_data->base.input;
     struct ctrl_meta *meta = bt_data->raw_src_mappings[PAD].meta;
 
-#ifdef CONFIG_BLUERETRO_RAW_INPUT
-    printf("{\"log_type\": \"wireless_input\", \"report_id\": %ld, \"axes\": [%u, %u, %u, %u], \"btns\": %u, \"hat\": %u}\n",
+    TESTS_CMDS_LOG("\"wireless_input\": {\"report_id\": %ld, \"axes\": [%u, %u, %u, %u], \"btns\": %u, \"hat\": %u},\n",
         bt_data->base.report_id, map->axes[sw_axes_idx[0]], map->axes[sw_axes_idx[1]],
         map->axes[sw_axes_idx[2]], map->axes[sw_axes_idx[3]], map->buttons, map->hat);
-#endif
 
     if (!atomic_test_bit(&bt_data->base.flags[PAD], BT_INIT)) {
         if (sw_pad_init(bt_data)) {
@@ -524,17 +512,33 @@ int32_t sw_to_generic(struct bt_data *bt_data, struct wireless_ctrl *ctrl_data) 
 }
 
 void sw_fb_from_generic(struct generic_fb *fb_data, struct bt_data *bt_data) {
-    struct sw_conf *conf = (struct sw_conf *)bt_data->base.output;
-    memset((void *)conf, 0, sizeof(*conf));
+    struct bt_hidp_sw_conf *set_conf = (struct bt_hidp_sw_conf *)bt_data->base.output;
+    /* 8bitdo wont rumble w/ set_conf so we need keep track of fb_type somehow */
+    bt_data->base.output[127] = fb_data->type;
 
-    conf->subcmd = BT_HIDP_SW_SUBCMD_SET_LED;
-    conf->subcmd_data[0] = led_dev_id_map[bt_data->base.pids->out_idx];
+    switch (fb_data->type) {
+        case FB_TYPE_RUMBLE:
+            if (fb_data->state) {
+                set_conf->r_lra.hf.freq = BT_HIDP_SW_LRA_R_HF_FREQ;
+                set_conf->r_lra.hf.amp = (uint8_t)((float)fb_data->hf_pwr / 2.55);
+                set_conf->r_lra.lf.freq = BT_HIDP_SW_LRA_R_LF_FREQ;
+                set_conf->r_lra.lf.amp = (uint8_t)((float)fb_data->hf_pwr / 2.55);
+                set_conf->r_lra.lf.tbd1 = 1;
 
-    if (fb_data->state) {
-        memcpy((void *)conf->rumble, (void *)sw_rumble_on, sizeof(sw_rumble_on));
-    }
-    else {
-        memcpy((void *)conf->rumble, (void *)sw_rumble_off, sizeof(sw_rumble_off));
+                set_conf->l_lra.hf.freq = BT_HIDP_SW_LRA_L_HF_FREQ;
+                set_conf->l_lra.hf.amp = (uint8_t)((float)fb_data->lf_pwr / 2.55);
+                set_conf->l_lra.lf.freq = BT_HIDP_SW_LRA_L_LF_FREQ;
+                set_conf->l_lra.lf.amp = (uint8_t)((float)fb_data->lf_pwr / 2.55);
+                set_conf->l_lra.lf.tbd1 = 1;
+            }
+            else {
+                set_conf->l_lra.val = BT_HIDP_SW_LRA_IDLE;
+                set_conf->r_lra.val = BT_HIDP_SW_LRA_IDLE;
+            }
+            break;
+        case FB_TYPE_PLAYER_LED:
+            set_conf->subcmd_data[0] = led_dev_id_map[bt_data->base.pids->out_idx];
+            break;
     }
 }
 

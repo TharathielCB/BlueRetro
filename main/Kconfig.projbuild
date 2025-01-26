@@ -137,10 +137,10 @@ menu "BlueRetro"
             help
                 Select this to make an image for QEMU.
 
-        config BLUERETRO_PKT_INJECTION
-            bool "Enable packet injection"
+        config BLUERETRO_WS_CMDS
+            bool "Enable websocket cmds"
             help
-                Select this to enable packet injection via UART0.
+                Select this to enable websocket cmds.
 
         config BLUERETRO_BT_DISABLE
             bool "Disable Bluetooth init"
@@ -187,6 +187,11 @@ menu "BlueRetro"
             help
                 Select this to enable adapter rumble debug.
 
+        config BLUERETRO_ADAPTER_RUMBLE_TEST
+            bool "Enable adapter rumble test"
+            help
+                Select this to enable adapter rumble test.
+
         config BLUERETRO_ADAPTER_INPUT_DBG
             bool "Enable adapter input debug"
             help
@@ -197,21 +202,6 @@ menu "BlueRetro"
             help
                 Select this to enable adapter input mapping debug.
 
-        config BLUERETRO_RAW_INPUT
-            bool "Enable JSON raw input debug"
-            help
-                Select this to enable JSON raw input debug.
-
-        config BLUERETRO_RAW_OUTPUT
-            bool "Enable JSON raw output debug"
-            help
-                Select this to enable JSON raw output debug.
-
-        config BLUERETRO_JSON_DBG
-            bool "Display debug in JSON format"
-            help
-                Select this to display debug in JSON format.
-
         config BLUERETRO_WIRED_TRACE
             bool "Enable wired trace"
             help
@@ -221,7 +211,6 @@ menu "BlueRetro"
             bool "Enable Bluetooth timing tests"
             help
                 Select this to enable Bluetooth timeing tests.
-
 
         config BLUERETRO_BT_REPORT_INTERVAL_STATS
             bool "Print interval between receive Bluetooth HID report"
@@ -255,6 +244,11 @@ menu "BlueRetro"
                 bool "SW"
 
         endchoice
+
+        config BLUERETRO_BTMON_VERBOSE
+            bool "Enable verbose loggin into BT monitor"
+            help
+                Seclect this to enable verbose loggin into BT monitor.
 
     endmenu
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2024, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,8 @@
 #include "adapter/config.h"
 #include "adapter/kb_monitor.h"
 #include "adapter/wired/wired.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "ps.h"
 
 #define PS_JOYSTICK_AXES_CNT 4
@@ -220,7 +222,7 @@ void ps_meta_init(struct wired_ctrl *ctrl_data) {
                     ctrl_data[i].desc = ps_kb_desc;
                     goto exit_axes_loop;
                 case DEV_MOUSE:
-                    if (i >= PS_JOYSTICK_AXES_CNT) {
+                    if (j >= PS_JOYSTICK_AXES_CNT) {
                         goto exit_axes_loop;
                     }
                     ctrl_data[i].mask = ps_mouse_mask;
@@ -280,13 +282,15 @@ static void ps_ctrl_from_generic(struct wired_ctrl *ctrl_data, struct wired_data
                 map_tmp.axes[ps_axes_idx[i]] = (uint8_t)(ctrl_data->axes[i].value + ctrl_data->axes[i].meta->neutral);
             }
 
-            if (i >= PS_JOYSTICK_AXES_CNT && map_tmp.axes[ps_axes_idx[i]]) {
-                map_tmp.buttons &= ~ps_btns_mask[btn_id];;
-                wired_data->cnt_mask[btn_id] = ctrl_data->btns[0].cnt_mask[btn_id];
-            }
-            else {
-                map_tmp.buttons |= ps_btns_mask[btn_id];
-                wired_data->cnt_mask[btn_id] = 0;
+            if (i >= PS_JOYSTICK_AXES_CNT) {
+                if (map_tmp.axes[ps_axes_idx[i]]) {
+                    map_tmp.buttons &= ~ps_btns_mask[btn_id];;
+                    wired_data->cnt_mask[btn_id] = ctrl_data->btns[0].cnt_mask[btn_id];
+                }
+                else {
+                    map_tmp.buttons |= ps_btns_mask[btn_id];
+                    wired_data->cnt_mask[btn_id] = 0;
+                }
             }
         }
         wired_data->cnt_mask[btn_id] = ctrl_data->axes[i].cnt_mask;
@@ -294,12 +298,14 @@ static void ps_ctrl_from_generic(struct wired_ctrl *ctrl_data, struct wired_data
 
     memcpy(wired_data->output, (void *)&map_tmp, sizeof(map_tmp));
 
-#ifdef CONFIG_BLUERETRO_RAW_OUTPUT
-    printf("{\"log_type\": \"wired_output\", \"axes\": [%d, %d, %d, %d], \"btns\": [%d, %d]}\n",
+    TESTS_CMDS_LOG("\"wired_output\": {\"axes\": [%d, %d, %d, %d], \"btns\": [%d, %d]},\n",
         map_tmp.axes[ps_axes_idx[0]], map_tmp.axes[ps_axes_idx[1]],
         map_tmp.axes[ps_axes_idx[2]], map_tmp.axes[ps_axes_idx[3]],
         map_tmp.buttons, map_tmp.analog_btn);
-#endif
+    BT_MON_LOG("\"wired_output\": {\"axes\": [%02X, %02X, %02X, %02X], \"btns\": [%04X, %02X]},\n",
+        map_tmp.axes[ps_axes_idx[0]], map_tmp.axes[ps_axes_idx[1]],
+        map_tmp.axes[ps_axes_idx[2]], map_tmp.axes[ps_axes_idx[3]],
+        map_tmp.buttons, map_tmp.analog_btn);
 }
 
 static void ps_mouse_from_generic(struct wired_ctrl *ctrl_data, struct wired_data *wired_data) {
@@ -383,9 +389,17 @@ void ps_from_generic(int32_t dev_mode, struct wired_ctrl *ctrl_data, struct wire
 void ps_fb_to_generic(int32_t dev_mode, struct raw_fb *raw_fb_data, struct generic_fb *fb_data) {
     fb_data->wired_id = raw_fb_data->header.wired_id;
     fb_data->type = raw_fb_data->header.type;
-    fb_data->state = raw_fb_data->data[0];
-    fb_data->cycles = 0;
-    fb_data->start = 0;
+
+    switch (fb_data->type) {
+        case FB_TYPE_RUMBLE:
+            fb_data->state = (raw_fb_data->data[0] || raw_fb_data->data[1] ? 1 : 0);
+            fb_data->lf_pwr = raw_fb_data->data[1];
+            fb_data->hf_pwr = (raw_fb_data->data[0] == 0x01) ? 0xFF : 0x00;
+            break;
+        case FB_TYPE_STATUS_LED:
+            fb_data->led = raw_fb_data->data[0];
+            break;
+    }
 }
 
 void IRAM_ATTR ps_gen_turbo_mask(struct wired_data *wired_data) {
