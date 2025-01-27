@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023, Jacques Gagnon
+ * Copyright (c) 2020-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,8 @@
 #include "system/manager.h"
 #include "zephyr/types.h"
 #include "tools/util.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "genesis.h"
 #include "driver/gpio.h"
 
@@ -156,7 +158,7 @@ static DRAM_ATTR const uint32_t genesis_btns_mask[2][3][32] = {
             0, 0, 0, 0,
             0, 0, 0, 0,
             0, 0, 0, BIT(P1_Y),
-            BIT(P1_MODE), 0, 0, 0,
+            0, BIT(P1_MODE), 0, 0,
             BIT(P1_X), BIT(P1_X), 0, 0,
             BIT(P1_Z), BIT(P1_Z), 0, 0,
         },
@@ -191,7 +193,7 @@ static DRAM_ATTR const uint32_t genesis_btns_mask[2][3][32] = {
             0, 0, 0, 0,
             0, 0, 0, 0,
             0, 0, 0, BIT(P2_Y),
-            BIT(P2_MODE), 0, 0, 0,
+            0, BIT(P2_MODE), 0, 0,
             BIT(P2_X), BIT(P2_X), 0, 0,
             BIT(P2_Z), BIT(P2_Z), 0, 0,
         },
@@ -308,11 +310,12 @@ static void genesis_std_from_generic(struct wired_ctrl *ctrl_data, struct wired_
 
     memcpy(wired_data->output, (void *)&map_tmp, sizeof(map_tmp));
 
-#ifdef CONFIG_BLUERETRO_RAW_OUTPUT
-    printf("{\"log_type\": \"wired_output\", \"btns\": [%ld, %ld, %ld, %ld, %ld, %ld]}\n",
+    TESTS_CMDS_LOG("\"wired_output\": {\"btns\": [%ld, %ld, %ld, %ld, %ld, %ld]},\n",
         map_tmp.buttons[0], map_tmp.buttons[1], map_tmp.buttons[2],
         map_tmp.buttons_high[0], map_tmp.buttons_high[1], map_tmp.buttons_high[2]);
-#endif
+    BT_MON_LOG("\"wired_output\": {\"btns\": [%08lX, %08lX, %08lX, %08lX, %08lX, %08lX]},\n",
+        map_tmp.buttons[0], map_tmp.buttons[1], map_tmp.buttons[2],
+        map_tmp.buttons_high[0], map_tmp.buttons_high[1], map_tmp.buttons_high[2]);
 }
 
 static void genesis_twh_from_generic(struct wired_ctrl *ctrl_data, struct wired_data *wired_data) {

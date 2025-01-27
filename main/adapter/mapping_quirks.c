@@ -105,6 +105,22 @@ static void saturn_diy_8bitdo(struct raw_src_mapping *map) {
     map->btns_mask[PAD_RS] = tmp;
 }
 
+static void gc_diy_8bitdo(struct raw_src_mapping *map) {
+    map->mask[0] = 0xFF1F0FFF;
+    map->desc[0] = 0x110000FF;
+
+    uint32_t tmp = map->btns_mask[PAD_RB_LEFT];
+    map->btns_mask[PAD_RB_LEFT] = map->btns_mask[PAD_RB_RIGHT];
+    map->btns_mask[PAD_RB_RIGHT] = tmp;
+    map->btns_mask[PAD_RS] = map->btns_mask[PAD_MS];
+    map->btns_mask[PAD_LT] = BIT(8);
+    map->btns_mask[PAD_RT] = BIT(9);
+    map->btns_mask[PAD_MS] = 0;
+    map->btns_mask[PAD_LM] = 0;
+    map->btns_mask[PAD_RM] = 0;
+    map->btns_mask[PAD_LS] = 0;
+}
+
 static void n64_bluen64(struct raw_src_mapping *map) {
     map->mask[0] = 0x23150FFF;
     map->desc[0] = 0x000000FF;
@@ -148,6 +164,11 @@ enum {
 };
 
 static void stadia(struct raw_src_mapping *map) {
+    map->mask[0] = 0xBBFF1FFF;
+    map->desc[0] = 0x110000FF;
+
+    memset(map->btns_mask, 0, sizeof(map->btns_mask));
+
     map->btns_mask[PAD_RD_LEFT] = BIT(STADIA_CAPTURE);
     map->btns_mask[PAD_RB_LEFT] = BIT(STADIA_X);
     map->btns_mask[PAD_RB_RIGHT] = BIT(STADIA_B);
@@ -240,5 +261,20 @@ void mapping_quirks_apply(struct bt_data *bt_data) {
     }
     if (atomic_test_bit(&bt_data->base.flags[PAD], BT_QUIRK_OUYA)) {
         ouya(&bt_data->raw_src_mappings[PAD]);
+    }
+    if (atomic_test_bit(&bt_data->base.flags[PAD], BT_QUIRK_8BITDO_GC)) {
+        gc_diy_8bitdo(&bt_data->raw_src_mappings[PAD]);
+    }
+}
+
+void mapping_quirks_apply_pnp(struct bt_data *bt_data) {
+    switch (bt_data->base.vid) {
+        case 0x18D1: /* Google */
+            switch (bt_data->base.pid) {
+                case 0x9400: /* Stadia */
+                    stadia(&bt_data->raw_src_mappings[PAD]);
+                    break;
+            }
+            break;
     }
 }

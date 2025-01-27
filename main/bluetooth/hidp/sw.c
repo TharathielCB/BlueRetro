@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,8 @@
 #include "bluetooth/host.h"
 #include "bluetooth/hci.h"
 #include "tools/util.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "sw.h"
 
 //#define SW_DISABLE_SHIP_EN
@@ -15,7 +17,7 @@
 //#define SW_TRIGGER_TIME_EN
 //#define SW_ENABLE_IMU_EN
 //#define SW_SET_MCU_CFG_EN
-#define KEEPALIVE_PERIOD_US 3000000
+#define SW_INIT_STATE_RETRY_MAX 10
 
 enum {
     SW_INIT_STATE_READ_INFO = 0,
@@ -55,49 +57,48 @@ static void bt_hid_sw_set_calib(struct bt_hid_sw_ctrl_calib *calib, uint8_t *dat
 }
 
 static void bt_hid_sw_print_calib(struct bt_hid_sw_ctrl_calib *calib) {
-#ifdef CONFIG_BLUERETRO_JSON_DBG
-    printf("{\"log_type\": \"calib_data\", ");
-    printf("\"rel_min\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].rel_min, calib->sticks[0].axes[1].rel_min,
+    TESTS_CMDS_LOG("\"calib_data\": {");
+    TESTS_CMDS_LOG("\"rel_min\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].rel_min, calib->sticks[0].axes[1].rel_min,
         calib->sticks[1].axes[0].rel_min, calib->sticks[1].axes[1].rel_min);
-    printf("\"rel_max\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].rel_max, calib->sticks[0].axes[1].rel_max,
+    TESTS_CMDS_LOG("\"rel_max\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].rel_max, calib->sticks[0].axes[1].rel_max,
         calib->sticks[1].axes[0].rel_max, calib->sticks[1].axes[1].rel_max);
-    printf("\"neutral\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].neutral, calib->sticks[0].axes[1].neutral,
+    TESTS_CMDS_LOG("\"neutral\": [%u, %u, %u, %u], ", calib->sticks[0].axes[0].neutral, calib->sticks[0].axes[1].neutral,
         calib->sticks[1].axes[0].neutral, calib->sticks[1].axes[1].neutral);
-    printf("\"deadzone\": [%u, %u, %u, %u]}\n", calib->sticks[0].deadzone, calib->sticks[0].deadzone,
+    TESTS_CMDS_LOG("\"deadzone\": [%u, %u, %u, %u]},\n", calib->sticks[0].deadzone, calib->sticks[0].deadzone,
         calib->sticks[1].deadzone, calib->sticks[1].deadzone);
-#else
-    printf("# rel_min LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_min, calib->sticks[1].axes[0].rel_min);
-    printf("# neutral LX %03X RX %03X\n", calib->sticks[0].axes[0].neutral, calib->sticks[1].axes[0].neutral);
-    printf("# rel_max LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_max, calib->sticks[1].axes[0].rel_max);
-    printf("# rel_min LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_min, calib->sticks[1].axes[1].rel_min);
-    printf("# neutral LY %03X RY %03X\n", calib->sticks[0].axes[1].neutral, calib->sticks[1].axes[1].neutral);
-    printf("# rel_max LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_max, calib->sticks[1].axes[1].rel_max);
-    printf("#         LD %03X RD %03X\n", calib->sticks[0].deadzone, calib->sticks[1].deadzone);
-#endif
+    printf("rel_min LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_min, calib->sticks[1].axes[0].rel_min);
+    printf("neutral LX %03X RX %03X\n", calib->sticks[0].axes[0].neutral, calib->sticks[1].axes[0].neutral);
+    printf("rel_max LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_max, calib->sticks[1].axes[0].rel_max);
+    printf("rel_min LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_min, calib->sticks[1].axes[1].rel_min);
+    printf("neutral LY %03X RY %03X\n", calib->sticks[0].axes[1].neutral, calib->sticks[1].axes[1].neutral);
+    printf("rel_max LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_max, calib->sticks[1].axes[1].rel_max);
+    printf("        LD %03X RD %03X\n", calib->sticks[0].deadzone, calib->sticks[1].deadzone);
+    bt_mon_log(true, "rel_min LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_min, calib->sticks[1].axes[0].rel_min);
+    bt_mon_log(true, "neutral LX %03X RX %03X\n", calib->sticks[0].axes[0].neutral, calib->sticks[1].axes[0].neutral);
+    bt_mon_log(true, "rel_max LX %03X RX %03X\n", calib->sticks[0].axes[0].rel_max, calib->sticks[1].axes[0].rel_max);
+    bt_mon_log(true, "rel_min LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_min, calib->sticks[1].axes[1].rel_min);
+    bt_mon_log(true, "neutral LY %03X RY %03X\n", calib->sticks[0].axes[1].neutral, calib->sticks[1].axes[1].neutral);
+    bt_mon_log(true, "rel_max LY %03X RY %03X\n", calib->sticks[0].axes[1].rel_max, calib->sticks[1].axes[1].rel_max);
+    bt_mon_log(true, "        LD %03X RD %03X\n", calib->sticks[0].deadzone, calib->sticks[1].deadzone);
 }
 
 void bt_hid_cmd_sw_set_conf(struct bt_dev *device, void *report) {
     struct bt_hidp_sw_conf *sw_conf = (struct bt_hidp_sw_conf *)bt_hci_pkt_tmp.hidp_data;
+    uint8_t protocol = BT_HIDP_SW_SET_CONF;
+    uint16_t len = sizeof(struct bt_hidp_sw_conf);
 
     memcpy((void *)sw_conf, report, sizeof(*sw_conf));
     sw_conf->tid = device->tid++;
     sw_conf->tid &= 0xF;
 
-    /* Reset keepalive since this serve as one & also avoid rumble disruption */
-    esp_timer_restart(device->timer_hdl, KEEPALIVE_PERIOD_US);
 
-    bt_hid_cmd(device->acl_handle, device->intr_chan.dcid, BT_HIDP_DATA_OUT, BT_HIDP_SW_SET_CONF, sizeof(*sw_conf));
-}
+    /* 8bitdo wont rumble w/ set_conf... */
+    if (((uint8_t *)report)[127] == FB_TYPE_RUMBLE) {
+        protocol = BT_HIDP_SW_SET_RUMBLE;
+        len = sizeof(struct bt_hidp_sw_rumble);
+    }
 
-void bt_hid_cmd_sw_send_keep_alive(struct bt_dev *device) {
-    struct bt_hidp_sw_rumble *sw_rumble = (struct bt_hidp_sw_rumble *)bt_hci_pkt_tmp.hidp_data;
-
-    sw_rumble->tid = device->tid++;
-    sw_rumble->tid &= 0xF;
-    sw_rumble->rumble32[0] = BT_HIDP_SW_RUMBLE_IDLE;
-    sw_rumble->rumble32[1] = BT_HIDP_SW_RUMBLE_IDLE;
-
-    bt_hid_cmd(device->acl_handle, device->intr_chan.dcid, BT_HIDP_DATA_OUT, BT_HIDP_SW_SET_RUMBLE, sizeof(*sw_rumble));
+    bt_hid_cmd(device->acl_handle, device->intr_chan.dcid, BT_HIDP_DATA_OUT, protocol, len);
 }
 
 void bt_hid_sw_get_calib(int32_t dev_id, struct bt_hid_sw_ctrl_calib **cal) {
@@ -109,19 +110,16 @@ void bt_hid_sw_get_calib(int32_t dev_id, struct bt_hid_sw_ctrl_calib **cal) {
     }
 }
 
-static void bt_hid_sw_keepalive_callback(void *arg) {
-    struct bt_dev *device = (struct bt_dev *)arg;
-
-    bt_hid_cmd_sw_send_keep_alive(device);
-}
-
 static void bt_hid_sw_exec_next_state(struct bt_dev *device) {
-    switch(device->hid_state++) {
+    switch(device->hid_state) {
         case SW_INIT_STATE_READ_INFO:
         {
             struct bt_hidp_sw_conf sw_conf = {
+                .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                 .subcmd = BT_HIDP_SW_SUBCMD_READ_INFO,
             };
+            device->tid = 0;
             bt_hid_cmd_sw_set_conf(device, (void *)&sw_conf);
             break;
         }
@@ -190,7 +188,8 @@ static void bt_hid_sw_exec_next_state(struct bt_dev *device) {
         case SW_INIT_STATE_SET_MCU_CFG:
         {
             struct bt_hidp_sw_conf sw_conf = {
-                .rumble = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40},
+                .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                 .subcmd = BT_HIDP_SW_SUBCMD_SET_MCU_CFG,
                 .subcmd_data[0] = 0x21,
             };
@@ -202,7 +201,8 @@ static void bt_hid_sw_exec_next_state(struct bt_dev *device) {
         default:
         {
             struct bt_hidp_sw_conf sw_conf = {
-                .rumble = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40},
+                .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                 .subcmd = BT_HIDP_SW_SUBCMD_SET_LED,
                 .subcmd_data[0] = bt_hid_led_dev_id_map[device->ids.out_idx],
             };
@@ -216,22 +216,33 @@ static void bt_hid_sw_init_callback(void *arg) {
     struct bt_dev *device = (struct bt_dev *)arg;
 
     printf("# %s\n", __FUNCTION__);
+    if (device->hid_retry_cnt++ > SW_INIT_STATE_RETRY_MAX) {
+        if (device->hid_state == SW_INIT_STATE_SET_LED) {
+            esp_timer_delete(device->timer_hdl);
+            device->timer_hdl = NULL;
+            return;
+        }
+        device->hid_state++;
+        device->hid_retry_cnt = 0;
+    }
     bt_hid_sw_exec_next_state(device);
 
-    esp_timer_delete(device->timer_hdl);
-    device->timer_hdl = NULL;
+    esp_timer_start_once(device->timer_hdl, 100000);
 
-    const esp_timer_create_args_t sw_timer_args = {
-        .callback = &bt_hid_sw_keepalive_callback,
-        .arg = (void *)device,
-        .name = "sw_keepalive"
-    };
-    esp_timer_create(&sw_timer_args, (esp_timer_handle_t *)&device->timer_hdl);
-    esp_timer_start_periodic(device->timer_hdl, KEEPALIVE_PERIOD_US);
+    atomic_set_bit(&device->flags, BT_DEV_HID_INIT_DONE);
 }
 
 void bt_hid_sw_init(struct bt_dev *device) {
 #ifndef CONFIG_BLUERETRO_TEST_FALLBACK_REPORT
+    struct bt_data *bt_data = &bt_adapter.data[device->ids.id];
+    struct bt_hidp_sw_conf *set_conf = (struct bt_hidp_sw_conf *)bt_data->base.output;
+
+    /* Init output data for Rumble/LED feedback */
+    set_conf->l_lra.val = BT_HIDP_SW_LRA_IDLE;
+    set_conf->r_lra.val = BT_HIDP_SW_LRA_IDLE;
+    set_conf->subcmd = BT_HIDP_SW_SUBCMD_SET_LED;
+    set_conf->subcmd_data[0] = bt_hid_led_dev_id_map[bt_data->base.pids->out_idx];
+
     const esp_timer_create_args_t sw_timer_args = {
         .callback = &bt_hid_sw_init_callback,
         .arg = (void *)device,
@@ -260,30 +271,39 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                     switch(ack->subcmd) {
                         case BT_HIDP_SW_SUBCMD_READ_INFO:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_READ_INFO\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_SET_REP_MODE:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_SET_REP_MODE\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_TRIGGER_TIME:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_TRIGGER_TIME\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_DISABLE_SHIP:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_DISABLE_SHIP\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_READ_SPI:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_READ_SPI 0x%04X\n", ack->addr);
                             switch (ack->addr) {
                                 case 0x603D:
@@ -311,7 +331,8 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                                     }
 
                                     struct bt_hidp_sw_conf sw_conf = {
-                                        .rumble = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40},
+                                        .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                                        .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                                         .subcmd = BT_HIDP_SW_SUBCMD_READ_SPI,
                                         .addr = 0x6086,
                                         .len = 18,
@@ -328,7 +349,8 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                                     dev_calib->sticks[0].deadzone = ((data[4] << 8) & 0xF00) | data[3];
 
                                     struct bt_hidp_sw_conf sw_conf = {
-                                        .rumble = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40},
+                                        .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                                        .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                                         .subcmd = BT_HIDP_SW_SUBCMD_READ_SPI,
                                         .addr = 0x6098,
                                         .len = 18,
@@ -345,7 +367,8 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                                     dev_calib->sticks[1].deadzone = ((data[4] << 8) & 0xF00) | data[3];
 
                                     struct bt_hidp_sw_conf sw_conf = {
-                                        .rumble = {0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40},
+                                        .l_lra.val = BT_HIDP_SW_LRA_IDLE,
+                                        .r_lra.val = BT_HIDP_SW_LRA_IDLE,
                                         .subcmd = BT_HIDP_SW_SUBCMD_READ_SPI,
                                         .addr = 0x8010,
                                         .len = 22,
@@ -381,6 +404,7 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                                     atomic_set_bit(&device->flags, BT_DEV_CALIB_SET);
                                     /* Force reinit once calib available */
                                     bt_type_update(device->ids.id, BT_SW, device->ids.subtype);
+                                    device->hid_state++;
                                     bt_hid_sw_exec_next_state(device);
                                     break;
                                 }
@@ -389,20 +413,32 @@ void bt_hid_sw_hdlr(struct bt_dev *device, struct bt_hci_pkt *bt_hci_acl_pkt, ui
                         }
                         case BT_HIDP_SW_SUBCMD_SET_MCU_CFG:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_SET_MCU_CFG\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_ENABLE_IMU:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_ENABLE_IMU\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
                             break;
                         }
                         case BT_HIDP_SW_SUBCMD_EN_RUMBLE:
                         {
+                            esp_timer_restart(device->timer_hdl, 100000);
                             printf("# BT_HIDP_SW_SUBCMD_EN_RUMBLE\n");
+                            device->hid_state++;
                             bt_hid_sw_exec_next_state(device);
+                            break;
+                        }
+                        case BT_HIDP_SW_SUBCMD_SET_LED:
+                        {
+                            esp_timer_delete(device->timer_hdl);
+                            device->timer_hdl = NULL;
                             break;
                         }
                     }

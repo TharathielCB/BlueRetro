@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2023, Jacques Gagnon
+ * Copyright (c) 2019-2025, Jacques Gagnon
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,12 @@
 #include "adapter/config.h"
 #include "adapter/wired/wired.h"
 #include "system/manager.h"
+#include "tests/cmds.h"
+#include "bluetooth/mon.h"
 #include "dc.h"
+
+#define DC_TIMEOUT_TO_US 250000
+#define DC_FREQ_TO_US 2000000
 
 enum {
     DC_Z = 0,
@@ -98,6 +103,26 @@ struct dc_kb_map {
         };
         uint8_t key_codes[8];
     };
+    int8_t br_key_codes[6];
+} __packed;
+
+struct dc_vibration {
+    uint8_t incline;
+    uint8_t freq; /* 0.5 Hz step, 0 = 0.5 Hz */
+    uint8_t pwr_n: 3;
+    uint8_t exhalation: 1;
+    uint8_t pwr_p: 3;
+    uint8_t convergence: 1;
+    uint8_t continuous: 1;
+    uint8_t tbd: 3;
+    uint8_t unit: 4;
+} __packed;
+
+struct dc_timeout {
+    uint8_t unit2_timeout;
+    uint8_t unit1_timeout; /* 0.25 sec step, 0 = 0.25 sec */
+    uint8_t unit_mask; /* unit1 mask is 0x02 */
+    uint8_t tbd;
 } __packed;
 
 static const uint32_t dc_mask[4] = {0x337FFFFF, 0x00000000, 0x00000000, BR_COMBO_MASK};
@@ -188,7 +213,9 @@ void IRAM_ATTR dc_init_buffer(int32_t dev_mode, struct wired_data *wired_data) {
     switch (dev_mode) {
         case DEV_KB:
         {
-            memset(wired_data->output, 0x00, sizeof(struct dc_kb_map));
+            struct dc_kb_map *map = (struct dc_kb_map *)wired_data->output;
+            memset(map, 0x00, sizeof(struct dc_kb_map));
+            memset(map->br_key_codes, KBM_NONE, sizeof(map->br_key_codes));
             break;
         }
         case DEV_MOUSE:
@@ -287,11 +314,12 @@ static void dc_ctrl_from_generic(struct wired_ctrl *ctrl_data, struct wired_data
 
     memcpy(wired_data->output, (void *)&map_tmp, sizeof(map_tmp));
 
-#ifdef CONFIG_BLUERETRO_RAW_OUTPUT
-    printf("{\"log_type\": \"wired_output\", \"axes\": [%d, %d, %d, %d, %d, %d], \"btns\": %d}\n",
+    TESTS_CMDS_LOG("\"wired_output\": {\"axes\": [%d, %d, %d, %d, %d, %d], \"btns\": %d},\n",
         map_tmp.axes[dc_axes_idx[0]], map_tmp.axes[dc_axes_idx[1]], map_tmp.axes[dc_axes_idx[2]],
         map_tmp.axes[dc_axes_idx[3]], map_tmp.axes[dc_axes_idx[4]], map_tmp.axes[dc_axes_idx[5]], map_tmp.buttons);
-#endif
+    BT_MON_LOG("\"wired_output\": {\"axes\": [%02X, %02X, %02X, %02X, %02X, %02X], \"btns\": %04X},\n",
+        map_tmp.axes[dc_axes_idx[0]], map_tmp.axes[dc_axes_idx[1]], map_tmp.axes[dc_axes_idx[2]],
+        map_tmp.axes[dc_axes_idx[3]], map_tmp.axes[dc_axes_idx[4]], map_tmp.axes[dc_axes_idx[5]], map_tmp.buttons);
 }
 
 static void dc_mouse_from_generic(struct wired_ctrl *ctrl_data, struct wired_data *wired_data) {
@@ -331,16 +359,56 @@ static void dc_kb_from_generic(struct wired_ctrl *ctrl_data, struct wired_data *
     struct dc_kb_map map_tmp = {0};
     uint32_t code_idx = 0;
 
+    memcpy((void *)&map_tmp, wired_data->output, sizeof(map_tmp));
+
+    /* Clear released keys since previous report and shift remaining one left in array */
+    for (uint32_t i = 0; i < ARRAY_SIZE(dc_kb_keycode_idx);) {
+        int8_t br_key_code = map_tmp.br_key_codes[i];
+
+        if (map_tmp.br_key_codes[i] > KBM_NONE && !(ctrl_data->btns[br_key_code / 32].value & BIT(br_key_code & 0x1F))) {
+            uint32_t j = i;
+            for (; j < (ARRAY_SIZE(dc_kb_keycode_idx) - 1); j++) {
+                map_tmp.br_key_codes[j] = map_tmp.br_key_codes[j + 1];
+            }
+            map_tmp.br_key_codes[j] = KBM_NONE;
+        }
+        else {
+            i++;
+        }
+    }
+
+    /* Update DC keycodes */
+    for (uint32_t i = 0; i < ARRAY_SIZE(dc_kb_keycode_idx); i++) {
+        int8_t br_key_code = map_tmp.br_key_codes[i];
+        if (br_key_code == KBM_NONE) {
+            map_tmp.key_codes[dc_kb_keycode_idx[i]] = 0;
+        }
+        else {
+            map_tmp.key_codes[dc_kb_keycode_idx[i]] = dc_kb_scancode[map_tmp.br_key_codes[i]];
+            code_idx++;
+        }
+    }
+
+    /* Add new key press */
     for (uint32_t i = 0; i < KBM_MAX && code_idx < ARRAY_SIZE(dc_kb_keycode_idx); i++) {
         if (ctrl_data->map_mask[i / 32] & BIT(i & 0x1F)) {
             if (ctrl_data->btns[i / 32].value & BIT(i & 0x1F)) {
                 if (dc_kb_scancode[i]) {
+                    for (uint32_t j = 0; j < ARRAY_SIZE(dc_kb_keycode_idx); j++) {
+                        if (map_tmp.br_key_codes[j] == i) {
+                            goto next_loop;
+                        }
+                    }
+                    map_tmp.br_key_codes[code_idx] = i;
                     map_tmp.key_codes[dc_kb_keycode_idx[code_idx++]] = dc_kb_scancode[i];
                 }
             }
         }
+next_loop:
+        ;
     }
 
+    map_tmp.bitfield = 0;
     if (ctrl_data->map_mask[0] & BIT(KB_LCTRL & 0x1F) && ctrl_data->btns[0].value & BIT(KB_LCTRL & 0x1F)) {
         map_tmp.bitfield |= BIT(DC_KB_LCTRL);
     }
@@ -385,36 +453,42 @@ void dc_from_generic(int32_t dev_mode, struct wired_ctrl *ctrl_data, struct wire
 }
 
 void dc_fb_to_generic(int32_t dev_mode, struct raw_fb *raw_fb_data, struct generic_fb *fb_data) {
+    struct dc_timeout *dc_to = (struct dc_timeout *)&raw_fb_data->data[0];
+    struct dc_vibration *dc_fb = (struct dc_vibration *)&raw_fb_data->data[4];
+
+    // printf("%s unit: %d, cont: %d, conv: %d, exha: %d, pwr_p: %d, pwr_n: %d, freq: %d, inc: %d\n",
+    //     __FUNCTION__, dc_fb->unit, dc_fb->continuous, dc_fb->convergence, dc_fb->exhalation,
+    //     dc_fb->pwr_p, dc_fb->pwr_n, dc_fb->freq, dc_fb->incline);
+    // printf("timeout: %d mask: %d\n", dc_to->unit1_timeout, dc_to->unit_mask);
+
     fb_data->wired_id = raw_fb_data->header.wired_id;
     fb_data->type = raw_fb_data->header.type;
-    fb_data->cycles = 0;
-    fb_data->start = 0;
 
+    /* Always stop current timer when we get new fb data */
+    adapter_fb_stop_timer_stop(raw_fb_data->header.wired_id);
+
+    /* This stop rumble when BR timeout trigger */
     if (raw_fb_data->header.data_len == 0) {
         fb_data->state = 0;
-        adapter_fb_stop_timer_stop(raw_fb_data->header.wired_id);
+        fb_data->lf_pwr = fb_data->hf_pwr = 0;
     }
     else {
-        uint32_t dur_us = 1000 * ((*(uint16_t *)&raw_fb_data->data[0]) * 250 + 250);
-        uint8_t freq = raw_fb_data->data[5];
-        uint8_t mag0 = raw_fb_data->data[6] & 0x07;
-        uint8_t mag1 = (raw_fb_data->data[6] >> 4) & 0x07;
+        uint32_t timeout_us = (dc_to->unit1_timeout + 1) * DC_TIMEOUT_TO_US;
+        /* pwr is either positive or negative, never both */
+        uint8_t pwr = dc_fb->pwr_p | dc_fb->pwr_n;
 
-        if (mag0 || mag1) {
-            if (freq && ((raw_fb_data->data[6] & 0x88) || !(raw_fb_data->data[7] & 0x01))) {
-                if (raw_fb_data->data[4]) {
-                    dur_us = 1000000 * raw_fb_data->data[4] * MAX(mag0, mag1) / freq;
-                }
-                else {
-                    dur_us = 1000000 / freq;
-                }
+        if (pwr) {
+            if (!dc_fb->continuous) {
+                timeout_us = DC_FREQ_TO_US / (dc_fb->freq + 1);
             }
             fb_data->state = 1;
-            adapter_fb_stop_timer_start(raw_fb_data->header.wired_id, dur_us);
+            fb_data->lf_pwr = fb_data->hf_pwr = pwr * (255.0 / 7.0);
+             
+            adapter_fb_stop_timer_start(raw_fb_data->header.wired_id, timeout_us);
         }
         else {
             fb_data->state = 0;
-            adapter_fb_stop_timer_stop(raw_fb_data->header.wired_id);
+            fb_data->lf_pwr = fb_data->hf_pwr = 0;
         }
     }
 }
